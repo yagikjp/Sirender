@@ -2,7 +2,7 @@
  * Sirender
  *  緊急車両サイレン検知
  *  1st author : @yagikjp  2024.03.02
- * 
+ *
  * サイレン仕様参考情報
  *  https://www.city.hekinan.lg.jp/material/files/group/47/inu.pdf
  *  救急車：960Hz 0.65S, 770Hz 0.65S
@@ -14,6 +14,7 @@
 #include <M5StickCPlus.h>
 #include <driver/i2s.h>
 #include <string.h>
+#include "AXP192.h"
 #include "arduinoFFT.h"
 
 #define PIN_CLK            0
@@ -49,7 +50,7 @@ Analyze       ring_analyze[NUM_RING];
 int16_t       adcBuffer [FFTsamples] = {0};
 double        vReal     [FFTsamples];          // サンプリングデータ
 double        vImag     [FFTsamples];
-arduinoFFT    FFT = arduinoFFT(vReal, vImag, FFTsamples, SAMPLING_RATE);
+ArduinoFFT<double>    FFT = ArduinoFFT<double>(vReal, vImag, FFTsamples, SAMPLING_RATE);
 
 
 //  FFTグラフ描画
@@ -102,7 +103,7 @@ void i2sInit() {
   pin_config.ws_io_num    = PIN_CLK;
   pin_config.data_out_num = I2S_PIN_NO_CHANGE;
   pin_config.data_in_num  = PIN_DATA;
-  
+
   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
   i2s_set_pin(I2S_NUM_0, &pin_config);
   i2s_set_clk(I2S_NUM_0, SAMPLING_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
@@ -203,14 +204,15 @@ void setup() {
   M5.Lcd.setRotation(1);
 
   i2sInit();      //  マイク初期化
-  FFT.Windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);  //  FFT窓関数
+  FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);  //  FFT窓関数
 
   delay(1000);    //  マイク初期化待ち
 }
 
 void loop() {
-  static unsigned long  ms_disp = 0;
+  static unsigned long  ms_disp = 0, ms_not_usb = 0;
   static int            siren, n, disp_mode = -1;
+  float                 vin;
   size_t                bytesread;
 
   idx = head % NUM_RING;
@@ -223,8 +225,8 @@ void loop() {
   }
   memset(vImag, 0, sizeof(double) * FFTsamples);
 
-  FFT.Compute(FFT_FORWARD);   //  FFT
-  FFT.ComplexToMagnitude();   //  実数変換
+  FFT.compute(FFTDirection::Forward);   //  FFT
+  FFT.complexToMagnitude();   //  実数変換
 
   check_peak(vReal, FFTsamples, SAMPLING_RATE, &ring_analyze[idx]);
 
@@ -262,6 +264,25 @@ void loop() {
           M5.Lcd.println(" Sirender");
         }
       }
+  }
+
+  vin = M5.Axp.GetVBusVoltage();
+  if(vin < 3) {
+    if(ms_not_usb == 0) {
+      ms_not_usb = millis();
+
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setTextSize(4);
+      M5.Lcd.setTextColor(WHITE, BLACK);
+      M5.Lcd.setCursor(10, 60);
+      M5.Lcd.println("Power OFF");
+    } else if(3000 < millis() - ms_not_usb) {
+      M5.Axp.PowerOff();
+    }
+  } else if(0 < ms_not_usb) {
+    ms_disp     =  0;
+    disp_mode   = -1;
+    ms_not_usb  = 0;
   }
 
 //  printf("\n");
